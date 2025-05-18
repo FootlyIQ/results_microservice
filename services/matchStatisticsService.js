@@ -38,12 +38,12 @@ exports.getMatchStatistics = async (matchId) => {
     const generalInfo = {
       match_id: matchId,
       date: moment(match.utcDate).tz(timezone).format('DD.MM.YYYY ob HH:mm'),
-      status:
-        match.status === 'LIVE'
-          ? 'LIVE'
-          : match.score.fullTime?.home != null
-          ? 'Finished'
-          : 'Scheduled',
+      status: ['IN_PLAY', 'LIVE', 'PAUSED'].includes(match.status)
+        ? 'LIVE'
+        : match.status === 'FINISHED'
+        ? 'Finished'
+        : 'Scheduled',
+
       venue: match.venue || 'No venue info',
       duration: match.score?.duration || 'No duration info',
       full_time_score: formatScore(match.score?.fullTime),

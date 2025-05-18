@@ -35,7 +35,7 @@ exports.getAllMatches = async () => {
       const date = moment(match.utcDate).tz(timezone).format('DD.MM.YYYY ob HH:mm');
 
       // Log ID za debug (v terminalu)
-      console.log(`Match ID: ${match.id} | ${homeTeam} vs ${awayTeam}`);
+      // console.log(`Match ID: ${match.id} | ${homeTeam} vs ${awayTeam}`);
 
       const matchData = {
         match_id: match.id,
@@ -116,6 +116,7 @@ exports.getTeamSquad = async (teamId) => {
 
     return {
       team: data.name || 'Unknown',
+      crest: data.crest || '',
       squad,
     };
   } catch (err) {
