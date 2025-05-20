@@ -10,7 +10,7 @@ exports.getMatchStatistics = async (matchId) => {
   try {
     console.log(`Kličem API za statistiko tekme z ID: ${matchId}`);
     const response = await axios.get(`${MATCH_DETAILS_URL}/${matchId}`, { headers });
-    console.log('API odgovor:', response.data);
+    //console.log('API odgovor:', response.data);
 
     const match = response.data.match || response.data;
 

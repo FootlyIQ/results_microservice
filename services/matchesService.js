@@ -12,30 +12,50 @@ exports.getAllMatches = async () => {
   try {
     const response = await axios.get(API_URL, { headers });
 
-    const leagues = {};
+    const countries = {};
 
     response.data.matches.forEach((match) => {
+      //console.log(`ID: ${match.id}, status API: ${match.status}`);
+      //console.log('GEGEEEE', match);
+      const country = match.area?.name || 'Unknown Country';
+      const countryFlag = match.area?.flag || '';
       const league = match.competition?.name || 'Unknown League';
+      const leagueEmblem = match.competition?.emblem || '';
       const homeTeam = match.homeTeam?.name || 'Unknown';
       const awayTeam = match.awayTeam?.name || 'Unknown';
       const homeCrest = match.homeTeam?.crest || '';
       const awayCrest = match.awayTeam?.crest || '';
+
       const status =
-        match.status === 'LIVE'
+        match.status === 'PAUSED'
+          ? 'Half Time'
+          : ['LIVE', 'IN_PLAY'].includes(match.status)
           ? 'LIVE'
-          : match.score.fullTime?.home != null
+          : match.score.fullTime?.home != null && match.status === 'FINISHED'
           ? 'Finished'
           : 'Scheduled';
-      const score =
-        status === 'Finished'
-          ? `${match.score.fullTime.home} - ${match.score.fullTime.away}`
-          : status === 'LIVE'
-          ? 'LIVE'
-          : 'Match not played yet';
+
       const date = moment(match.utcDate).tz(timezone).format('DD.MM.YYYY ob HH:mm');
 
-      // Log ID za debug (v terminalu)
-      // console.log(`Match ID: ${match.id} | ${homeTeam} vs ${awayTeam}`);
+      let score = 'Match not played yet';
+
+      if (status === 'Finished') {
+        score = `${match.score.fullTime.home} - ${match.score.fullTime.away}`;
+      } else if (status === 'Half Time') {
+        if (match.score.halfTime?.home != null) {
+          score = `${match.score.halfTime.home} - ${match.score.halfTime.away}`;
+        } else {
+          score = 'Half Time';
+        }
+      } else if (status === 'LIVE') {
+        if (match.score.fullTime?.home != null) {
+          score = `${match.score.fullTime.home} - ${match.score.fullTime.away}`;
+        } else {
+          score = '';
+        }
+      } else if (status === 'Scheduled') {
+        score = date;
+      }
 
       const matchData = {
         match_id: match.id,
@@ -46,16 +66,42 @@ exports.getAllMatches = async () => {
         score,
         status,
         date,
+        venue: match.venue || '',
+        matchday: match.matchday || '',
       };
 
-      if (!leagues[league]) leagues[league] = [];
-      leagues[league].push(matchData);
+      // Če država še ne obstaja, jo dodaj
+      if (!countries[country]) {
+        countries[country] = {
+          flag: countryFlag,
+          leagues: {},
+        };
+      }
+
+      // Če liga še ne obstaja v državi, jo dodaj
+      if (!countries[country].leagues[league]) {
+        countries[country].leagues[league] = {
+          emblem: leagueEmblem,
+          matches: [],
+        };
+      }
+
+      // Dodaj tekmo v pravilno ligo pod državo
+      countries[country].leagues[league].matches.push(matchData);
     });
 
-    return Object.keys(leagues).map((league) => ({
-      league,
-      matches: leagues[league],
+    // Pretvori v lepši array format za frontend
+    const result = Object.entries(countries).map(([country, data]) => ({
+      country,
+      flag: data.flag,
+      leagues: Object.entries(data.leagues).map(([league, leagueData]) => ({
+        league,
+        emblem: leagueData.emblem,
+        matches: leagueData.matches,
+      })),
     }));
+
+    return result;
   } catch (err) {
     console.error(err.message);
     return { error: 'Failed to fetch matches' };
@@ -67,19 +113,38 @@ exports.getTeamMatches = async (teamId) => {
     const response = await axios.get(`${TEAM_MATCHES_URL}/${teamId}/matches`, { headers });
 
     const matches = response.data.matches.map((match) => {
+      // console.log('Match:', match);
       const homeTeam = match.homeTeam?.name || 'Unknown';
       const awayTeam = match.awayTeam?.name || 'Unknown';
+      const homeCrest = match.homeTeam?.crest || '';
+      const awayCrest = match.awayTeam?.crest || '';
+      const matchId = match.id;
+
       const score =
         match.score.fullTime?.home != null
           ? `${match.score.fullTime.home} - ${match.score.fullTime.away}`
           : 'Match not played yet';
+
       const date = moment(match.utcDate).tz(timezone).format('DD.MM.YYYY ob HH:mm');
 
+      // NOVO:
+      const competitionName = match.competition?.name || 'Neznana liga';
+      const competitionLogo = match.competition?.emblem || '';
+      const matchday = match.matchday || '';
+      const stage = match.stage || '';
+
       return {
+        match_id: matchId,
         home_team: homeTeam,
         away_team: awayTeam,
+        home_crest: homeCrest,
+        away_crest: awayCrest,
         score,
         date,
+        competition_name: competitionName,
+        competition_logo: competitionLogo,
+        matchday: matchday,
+        stage,
       };
     });
 
