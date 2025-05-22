@@ -8,15 +8,18 @@ const TEAM_SQUAD_URL = process.env.TEAM_SQUAD_URL;
 const headers = { 'X-Auth-Token': API_KEY };
 const timezone = 'Europe/Madrid';
 
-exports.getAllMatches = async () => {
+exports.getAllMatches = async (dateFilter) => {
   try {
-    const response = await axios.get(API_URL, { headers });
+    // Construct URL with date parameter if provided
+    const url = dateFilter ? `${API_URL}?date=${dateFilter}` : API_URL;
+    console.log(`Calling API URL: ${url}`);
+
+    const response = await axios.get(url, { headers });
+    console.log(`📦 Število tekem iz API-ja: ${response.data.matches.length}`);
 
     const countries = {};
 
     response.data.matches.forEach((match) => {
-      //console.log(`ID: ${match.id}, status API: ${match.status}`);
-      //console.log('GEGEEEE', match);
       const country = match.area?.name || 'Unknown Country';
       const countryFlag = match.area?.flag || '';
       const league = match.competition?.name || 'Unknown League';
@@ -35,26 +38,24 @@ exports.getAllMatches = async () => {
           ? 'Finished'
           : 'Scheduled';
 
-      const date = moment(match.utcDate).tz(timezone).format('DD.MM.YYYY ob HH:mm');
+      const formattedDate = moment(match.utcDate).tz(timezone).format('DD.MM.YYYY ob HH:mm');
 
       let score = 'Match not played yet';
 
       if (status === 'Finished') {
         score = `${match.score.fullTime.home} - ${match.score.fullTime.away}`;
       } else if (status === 'Half Time') {
-        if (match.score.halfTime?.home != null) {
-          score = `${match.score.halfTime.home} - ${match.score.halfTime.away}`;
-        } else {
-          score = 'Half Time';
-        }
+        score =
+          match.score.halfTime?.home != null
+            ? `${match.score.halfTime.home} - ${match.score.halfTime.away}`
+            : 'Half Time';
       } else if (status === 'LIVE') {
-        if (match.score.fullTime?.home != null) {
-          score = `${match.score.fullTime.home} - ${match.score.fullTime.away}`;
-        } else {
-          score = '';
-        }
+        score =
+          match.score.fullTime?.home != null
+            ? `${match.score.fullTime.home} - ${match.score.fullTime.away}`
+            : '';
       } else if (status === 'Scheduled') {
-        score = date;
+        score = formattedDate;
       }
 
       const matchData = {
@@ -65,12 +66,11 @@ exports.getAllMatches = async () => {
         away_crest: awayCrest,
         score,
         status,
-        date,
+        date: formattedDate,
         venue: match.venue || '',
         matchday: match.matchday || '',
       };
 
-      // Če država še ne obstaja, jo dodaj
       if (!countries[country]) {
         countries[country] = {
           flag: countryFlag,
@@ -78,7 +78,6 @@ exports.getAllMatches = async () => {
         };
       }
 
-      // Če liga še ne obstaja v državi, jo dodaj
       if (!countries[country].leagues[league]) {
         countries[country].leagues[league] = {
           emblem: leagueEmblem,
@@ -86,11 +85,9 @@ exports.getAllMatches = async () => {
         };
       }
 
-      // Dodaj tekmo v pravilno ligo pod državo
       countries[country].leagues[league].matches.push(matchData);
     });
 
-    // Pretvori v lepši array format za frontend
     const result = Object.entries(countries).map(([country, data]) => ({
       country,
       flag: data.flag,
