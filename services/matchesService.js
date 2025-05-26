@@ -106,12 +106,24 @@ exports.getAllMatches = async (dateFilter) => {
   }
 };
 
-exports.getTeamMatches = async (teamId) => {
+exports.getTeamMatches = async (teamId, season = null, competition = null) => {
   try {
-    const response = await axios.get(`${TEAM_MATCHES_URL}/${teamId}/matches`, { headers });
+    let url = `${TEAM_MATCHES_URL}/${teamId}/matches`;
+    const params = {};
+
+    if (season) {
+      params.season = season;
+    }
+    if (competition) {
+      params.competitions = competition;
+    }
+
+    const response = await axios.get(url, {
+      headers,
+      params,
+    });
 
     const matches = response.data.matches.map((match) => {
-      // console.log('Match:', match);
       const homeTeam = match.homeTeam?.name || 'Unknown';
       const awayTeam = match.awayTeam?.name || 'Unknown';
       const homeCrest = match.homeTeam?.crest || '';
@@ -125,8 +137,7 @@ exports.getTeamMatches = async (teamId) => {
 
       const date = moment(match.utcDate).tz(timezone).format('DD.MM.YYYY ob HH:mm');
 
-      // NOVO:
-      const competitionName = match.competition?.name || 'Neznana liga';
+      const competitionName = match.competition?.name || 'Unknown league';
       const competitionLogo = match.competition?.emblem || '';
       const matchday = match.matchday || '';
       const stage = match.stage || '';
@@ -192,8 +203,26 @@ exports.getTeamSquad = async (teamId) => {
 
 exports.getPlayerDetails = async (playerId) => {
   try {
+    // First get the player's basic details
     const response = await axios.get(`${PLAYER_URL}/${playerId}`, { headers });
     const player = response.data;
+
+    // Get the team ID from the player's current team
+    const teamId = player.currentTeam?.id;
+    let specificPosition = player.position || player.section;
+
+    // If we have a team ID, try to get the specific position from the squad
+    if (teamId) {
+      try {
+        const squadResponse = await axios.get(`${TEAM_SQUAD_URL}/${teamId}`, { headers });
+        const squadPlayer = squadResponse.data.squad.find((p) => p.id === parseInt(playerId));
+        if (squadPlayer) {
+          specificPosition = squadPlayer.position;
+        }
+      } catch (err) {
+        console.log('Could not fetch specific position from squad:', err.message);
+      }
+    }
 
     return {
       id: player.id,
@@ -202,7 +231,7 @@ exports.getPlayerDetails = async (playerId) => {
       lastName: player.lastName,
       dateOfBirth: player.dateOfBirth,
       nationality: player.nationality,
-      position: player.position || player.section,
+      position: specificPosition,
       shirtNumber: player.shirtNumber,
       contract: player.currentTeam?.contract
         ? {
@@ -217,12 +246,25 @@ exports.getPlayerDetails = async (playerId) => {
   }
 };
 
-exports.getPlayerMatches = async (playerId, limit = 50) => {
+exports.getPlayerMatches = async (playerId, limit = 50, season = null, competition = null) => {
   try {
     const response = await axios.get(`${PLAYER_URL}/${playerId}/matches?limit=${limit}`, {
       headers,
     });
     const data = response.data;
+
+    // Filter matches based on season and competition
+    let filteredMatches = data.matches;
+    if (season || competition) {
+      filteredMatches = data.matches.filter((match) => {
+        const matchSeason = match.season
+          ? `${match.season.startDate.substring(0, 4)}/${match.season.endDate.substring(0, 4)}`
+          : null;
+        const seasonMatch = !season || matchSeason === season;
+        const competitionMatch = !competition || match.competition.id === parseInt(competition);
+        return seasonMatch && competitionMatch;
+      });
+    }
 
     return {
       playerInfo: {
@@ -232,19 +274,24 @@ exports.getPlayerMatches = async (playerId, limit = 50) => {
         nationality: data.person.nationality,
       },
       stats: {
-        matchesPlayed: data.aggregations.matchesOnPitch,
-        startingXI: data.aggregations.startingXI,
-        minutesPlayed: data.aggregations.minutesPlayed,
-        goals: data.aggregations.goals,
-        assists: data.aggregations.assists,
-        yellowCards: data.aggregations.yellowCards,
-        redCards: data.aggregations.redCards,
+        matchesOnPitch: filteredMatches.length,
+        startingXI: data.aggregations?.startingXI || 0,
+        minutesPlayed: data.aggregations?.minutesPlayed || 0,
+        goals: data.aggregations?.goals || 0,
+        assists: data.aggregations?.assists || 0,
+        yellowCards: data.aggregations?.yellowCards || 0,
+        redCards: data.aggregations?.redCards || 0,
       },
-      matches: data.matches.map((match) => ({
+      matches: filteredMatches.map((match) => ({
         match_id: match.id,
         competition: {
+          id: match.competition.id,
           name: match.competition.name,
           emblem: match.competition.emblem,
+        },
+        season: {
+          startDate: match.season.startDate,
+          endDate: match.season.endDate,
         },
         homeTeam: {
           name: match.homeTeam.name,
@@ -263,7 +310,59 @@ exports.getPlayerMatches = async (playerId, limit = 50) => {
       })),
     };
   } catch (err) {
-    console.error(err.message);
+    console.error('Error in getPlayerMatches:', err);
     return { error: 'Failed to fetch player matches' };
+  }
+};
+
+exports.getTeamCompetitionsAndSeasons = async (teamId) => {
+  try {
+    // Get all matches for the team with a single API call
+    const response = await axios.get(`${TEAM_MATCHES_URL}/${teamId}/matches`, { headers });
+
+    // Extract unique competitions and seasons
+    const competitions = new Set();
+    const seasons = new Set();
+
+    response.data.matches.forEach((match) => {
+      if (match.competition) {
+        competitions.add(
+          JSON.stringify({
+            id: match.competition.id,
+            name: match.competition.name,
+            code: match.competition.code,
+            emblem: match.competition.emblem,
+          })
+        );
+      }
+      if (match.season) {
+        seasons.add(
+          JSON.stringify({
+            year: `${match.season.startDate.substring(0, 4)}/${match.season.endDate.substring(
+              0,
+              4
+            )}`,
+            startDate: match.season.startDate,
+            endDate: match.season.endDate,
+            currentMatchday: match.season.currentMatchday,
+          })
+        );
+      }
+    });
+
+    return {
+      competitions: Array.from(competitions).map((comp) => JSON.parse(comp)),
+      seasons: Array.from(seasons)
+        .map((season) => JSON.parse(season))
+        .sort((a, b) => {
+          // Sort seasons in descending order (newest first)
+          const yearA = parseInt(a.year.split('/')[0]);
+          const yearB = parseInt(b.year.split('/')[0]);
+          return yearB - yearA;
+        }),
+    };
+  } catch (err) {
+    console.error('Error fetching team competitions and seasons:', err.message);
+    return { error: 'Failed to fetch team competitions and seasons' };
   }
 };
