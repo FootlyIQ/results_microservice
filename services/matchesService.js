@@ -25,6 +25,7 @@ exports.getAllMatches = async (dateFilter) => {
       const countryFlag = match.area?.flag || '';
       const league = match.competition?.name || 'Unknown League';
       const leagueEmblem = match.competition?.emblem || '';
+      const leagueCode = match.competition?.code || '';
       const homeTeam = match.homeTeam?.name || 'Unknown';
       const awayTeam = match.awayTeam?.name || 'Unknown';
       const homeCrest = match.homeTeam?.crest || '';
@@ -39,7 +40,7 @@ exports.getAllMatches = async (dateFilter) => {
           ? 'Finished'
           : 'Scheduled';
 
-      const formattedDate = moment(match.utcDate).tz(timezone).format('DD.MM.YYYY ob HH:mm');
+      const formattedDate = moment(match.utcDate).tz(timezone).format('DD.MM.YYYY [at] HH:mm');
 
       let score = 'Match not played yet';
 
@@ -82,6 +83,7 @@ exports.getAllMatches = async (dateFilter) => {
       if (!countries[country].leagues[league]) {
         countries[country].leagues[league] = {
           emblem: leagueEmblem,
+          code: leagueCode,
           matches: [],
         };
       }
@@ -95,6 +97,7 @@ exports.getAllMatches = async (dateFilter) => {
       leagues: Object.entries(data.leagues).map(([league, leagueData]) => ({
         league,
         emblem: leagueData.emblem,
+        code: leagueData.code,
         matches: leagueData.matches,
       })),
     }));
@@ -135,10 +138,11 @@ exports.getTeamMatches = async (teamId, season = null, competition = null) => {
           ? `${match.score.fullTime.home} - ${match.score.fullTime.away}`
           : 'Match not played yet';
 
-      const date = moment(match.utcDate).tz(timezone).format('DD.MM.YYYY ob HH:mm');
+      const date = moment(match.utcDate).tz(timezone).format('DD.MM.YYYY [at] HH:mm');
 
       const competitionName = match.competition?.name || 'Unknown league';
       const competitionLogo = match.competition?.emblem || '';
+      const competitionCode = match.competition?.code || '';
       const matchday = match.matchday || '';
       const stage = match.stage || '';
 
@@ -152,6 +156,7 @@ exports.getTeamMatches = async (teamId, season = null, competition = null) => {
         date,
         competition_name: competitionName,
         competition_logo: competitionLogo,
+        competition_code: competitionCode,
         matchday: matchday,
         stage,
       };
@@ -303,7 +308,7 @@ exports.getPlayerMatches = async (playerId, limit = 50, season = null, competiti
           crest: match.awayTeam.crest,
           score: match.score.fullTime.away,
         },
-        date: moment(match.utcDate).tz(timezone).format('DD.MM.YYYY ob HH:mm'),
+        date: moment(match.utcDate).tz(timezone).format('DD.MM.YYYY [at] HH:mm'),
         status: match.status,
         stage: match.stage,
         matchday: match.matchday,
@@ -364,5 +369,166 @@ exports.getTeamCompetitionsAndSeasons = async (teamId) => {
   } catch (err) {
     console.error('Error fetching team competitions and seasons:', err.message);
     return { error: 'Failed to fetch team competitions and seasons' };
+  }
+};
+
+exports.getCompetitionDetails = async (competitionCode, seasonYear) => {
+  try {
+    const baseUrl = 'https://api.football-data.org/v4';
+    console.log('Making requests to competition endpoints...');
+
+    // Get competition information
+    const competitionResponse = await axios.get(`${baseUrl}/competitions/${competitionCode}`, {
+      headers,
+    });
+    console.log('Competition response received');
+
+    // Find the requested season or default to current
+    const seasons = competitionResponse.data.seasons;
+    let selectedSeason;
+
+    if (seasonYear) {
+      // Try to find the exact season first
+      selectedSeason = seasons.find((season) => season.startDate.startsWith(seasonYear));
+    }
+
+    if (!selectedSeason) {
+      // If no specific season found or none requested, find the current season
+      selectedSeason = seasons.find((season) => {
+        const startYear = parseInt(season.startDate.split('-')[0]);
+        const endYear = parseInt(season.endDate.split('-')[0]);
+        const currentYear = new Date().getFullYear();
+        return currentYear >= startYear && currentYear <= endYear;
+      });
+    }
+
+    if (!selectedSeason) {
+      // If still no season found, use the most recent one
+      selectedSeason = seasons[0];
+    }
+
+    const seasonParam = selectedSeason.startDate.split('-')[0];
+    console.log('Selected season:', seasonParam);
+
+    // Get current standings for the selected season
+    const standingsResponse = await axios.get(
+      `${baseUrl}/competitions/${competitionCode}/standings`,
+      {
+        headers,
+        params: { season: seasonParam },
+      }
+    );
+    console.log('Standings response received');
+
+    // Get top scorers for the selected season
+    const scorersResponse = await axios.get(`${baseUrl}/competitions/${competitionCode}/scorers`, {
+      headers,
+      params: {
+        season: seasonParam,
+        limit: 10,
+      },
+    });
+    console.log('Scorers response received');
+
+    let matchesData = { matches: [] };
+    try {
+      console.log('Attempting to fetch matches with params:', {
+        season: seasonParam,
+        competitionCode,
+      });
+
+      const matchesResponse = await axios.get(
+        `${baseUrl}/competitions/${competitionCode}/matches`,
+        {
+          headers,
+          params: {
+            season: seasonParam,
+            limit: 100,
+          },
+        }
+      );
+      console.log('Matches response received');
+
+      // Sort matches by matchday in descending order and then by date
+      const sortedMatches = matchesResponse.data.matches.sort((a, b) => {
+        // First sort by matchday in descending order
+        if (a.matchday !== b.matchday) {
+          return b.matchday - a.matchday;
+        }
+        // If same matchday, sort by date
+        return new Date(a.utcDate) - new Date(b.utcDate);
+      });
+
+      // Create array of available seasons with year ranges, but only include recent seasons (2023 onwards)
+      // and only seasons that actually have match data
+      const availableSeasons = seasons
+        .filter((season) => {
+          const startYear = parseInt(season.startDate.split('-')[0]);
+          // Only include seasons from 2023 onwards
+          return startYear >= 2023;
+        })
+        .map((season) => ({
+          id: season.id,
+          year: parseInt(season.startDate.split('-')[0]),
+          label: `${season.startDate.split('-')[0]}/${season.endDate.split('-')[0]}`,
+        }))
+        .sort((a, b) => b.year - a.year); // Sort by year in descending order
+
+      matchesData = {
+        ...matchesResponse.data,
+        matches: sortedMatches,
+        availableSeasons,
+      };
+    } catch (matchError) {
+      console.log('Could not fetch matches. Error details:', {
+        message: matchError.message,
+        response: matchError.response?.data,
+        status: matchError.response?.status,
+        url: matchError.config?.url,
+        params: matchError.config?.params,
+      });
+
+      // Even if matches fail, still provide filtered available seasons
+      const availableSeasons = seasons
+        .filter((season) => {
+          const startYear = parseInt(season.startDate.split('-')[0]);
+          return startYear >= 2023;
+        })
+        .map((season) => ({
+          id: season.id,
+          year: parseInt(season.startDate.split('-')[0]),
+          label: `${season.startDate.split('-')[0]}/${season.endDate.split('-')[0]}`,
+        }))
+        .sort((a, b) => b.year - a.year);
+
+      matchesData = { matches: [], availableSeasons };
+    }
+
+    return {
+      competition: {
+        ...competitionResponse.data,
+        currentSeason: selectedSeason,
+        // Filter seasons to only include 2023 onwards, same as availableSeasons
+        seasons: competitionResponse.data.seasons.filter((season) => {
+          const startYear = parseInt(season.startDate.split('-')[0]);
+          return startYear >= 2023;
+        }),
+      },
+      standings: standingsResponse.data,
+      scorers: scorersResponse.data,
+      matches: matchesData,
+    };
+  } catch (err) {
+    console.error('Error fetching competition details:', err.message);
+    if (err.response) {
+      console.error('API Error details:', {
+        status: err.response.status,
+        statusText: err.response.statusText,
+        data: err.response.data,
+      });
+      const message = err.response.data?.message || err.response.data?.error || err.message;
+      return { error: `API Error: ${message}` };
+    }
+    return { error: 'Failed to fetch competition details' };
   }
 };
