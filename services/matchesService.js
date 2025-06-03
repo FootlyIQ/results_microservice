@@ -532,3 +532,257 @@ exports.getCompetitionDetails = async (competitionCode, seasonYear) => {
     return { error: 'Failed to fetch competition details' };
   }
 };
+
+// SEARCH FUNCTIONS - Lightweight functions for search only
+exports.getCompetitionTeams = async (competitionCode) => {
+  try {
+    console.log(`🔍 Fetching teams only for competition: ${competitionCode}`);
+    const baseUrl = 'https://api.football-data.org/v4';
+
+    // Get teams for competition - this is much lighter than full competition details
+    const response = await axios.get(`${baseUrl}/competitions/${competitionCode}/teams`, {
+      headers,
+    });
+
+    console.log(`✅ Fetched ${response.data.teams?.length || 0} teams from ${competitionCode}`);
+
+    return {
+      name: response.data.competition?.name || competitionCode,
+      teams: response.data.teams || [],
+    };
+  } catch (err) {
+    console.error(`❌ Error fetching teams for ${competitionCode}:`, err.message);
+    return { error: `Failed to fetch teams for ${competitionCode}` };
+  }
+};
+
+exports.searchTeams = async (searchTerm) => {
+  try {
+    console.log(`🔍 Searching teams for: "${searchTerm}"`);
+
+    if (!searchTerm || searchTerm.trim().length < 2) {
+      return { error: 'Search term must be at least 2 characters' };
+    }
+
+    // Search through major European competitions
+    const competitions = ['PL', 'PD', 'BL1', 'SA', 'FL1'];
+    const searchTermLower = searchTerm.toLowerCase().trim();
+    let allTeams = [];
+
+    for (const comp of competitions) {
+      try {
+        const compData = await exports.getCompetitionTeams(comp);
+        if (compData && compData.teams) {
+          const matchingTeams = compData.teams.filter((team) => {
+            const name = team.name?.toLowerCase() || '';
+            const shortName = team.shortName?.toLowerCase() || '';
+            const tla = team.tla?.toLowerCase() || '';
+
+            return (
+              name.includes(searchTermLower) ||
+              shortName.includes(searchTermLower) ||
+              tla.includes(searchTermLower) ||
+              name.startsWith(searchTermLower) ||
+              shortName.startsWith(searchTermLower)
+            );
+          });
+
+          // Add competition info to each team
+          matchingTeams.forEach((team) => {
+            team.competition = compData.name || comp;
+          });
+
+          allTeams.push(...matchingTeams);
+        }
+      } catch (error) {
+        console.log(`⚠️ Error searching in competition ${comp}:`, error.message);
+        continue;
+      }
+    }
+
+    // Remove duplicates based on team ID
+    const uniqueTeams = allTeams.filter(
+      (team, index, self) => index === self.findIndex((t) => t.id === team.id)
+    );
+
+    // Sort by relevance (exact matches first, then starts with, then contains)
+    uniqueTeams.sort((a, b) => {
+      const aName = a.name?.toLowerCase() || '';
+      const bName = b.name?.toLowerCase() || '';
+      const aShort = a.shortName?.toLowerCase() || '';
+      const bShort = b.shortName?.toLowerCase() || '';
+
+      // Exact match priority
+      if (aName === searchTermLower || aShort === searchTermLower) return -1;
+      if (bName === searchTermLower || bShort === searchTermLower) return 1;
+
+      // Starts with priority
+      if (aName.startsWith(searchTermLower) || aShort.startsWith(searchTermLower)) return -1;
+      if (bName.startsWith(searchTermLower) || bShort.startsWith(searchTermLower)) return 1;
+
+      return 0;
+    });
+
+    console.log(`✅ Found ${uniqueTeams.length} teams for "${searchTerm}"`);
+
+    return {
+      teams: uniqueTeams.slice(0, 20), // Limit to 20 results
+      total: uniqueTeams.length,
+      query: searchTerm,
+    };
+  } catch (error) {
+    console.error('❌ Error in searchTeams:', error);
+    return { error: 'Failed to search teams' };
+  }
+};
+
+exports.searchPlayers = async (searchTerm, teamId = null) => {
+  try {
+    console.log(`🔍 Searching players for: "${searchTerm}" (team_id: ${teamId})`);
+
+    if (!searchTerm || searchTerm.trim().length < 2) {
+      return { error: 'Search term must be at least 2 characters' };
+    }
+
+    const searchTermLower = searchTerm.toLowerCase().trim();
+    let allPlayers = [];
+    let allManagers = [];
+
+    if (teamId) {
+      // Search within a specific team
+      try {
+        const squadData = await exports.getTeamSquad(teamId);
+        if (squadData && squadData.squad) {
+          squadData.squad.forEach((person) => {
+            const name = person.name?.toLowerCase() || '';
+            const firstName = person.firstName?.toLowerCase() || '';
+            const lastName = person.lastName?.toLowerCase() || '';
+
+            const matches =
+              name.includes(searchTermLower) ||
+              firstName.includes(searchTermLower) ||
+              lastName.includes(searchTermLower) ||
+              name.startsWith(searchTermLower);
+
+            if (matches) {
+              // Add team info
+              const personWithTeam = {
+                ...person,
+                team: {
+                  id: squadData.team?.id,
+                  name: squadData.team?.name,
+                  crest: squadData.team?.crest,
+                },
+              };
+
+              // Separate players and managers
+              if (person.position === 'Manager' || person.position === 'Coach') {
+                allManagers.push(personWithTeam);
+              } else {
+                allPlayers.push(personWithTeam);
+              }
+            }
+          });
+        }
+      } catch (error) {
+        console.log(`⚠️ Error searching in team ${teamId}:`, error.message);
+      }
+    } else {
+      // Search across multiple teams (limited to avoid timeouts)
+      const competitions = ['PL', 'PD']; // Limit to 2 competitions for performance
+
+      for (const comp of competitions) {
+        try {
+          const compData = await exports.getCompetitionTeams(comp);
+          if (compData && compData.teams) {
+            // Only search first 10 teams per competition to avoid timeouts
+            for (const team of compData.teams.slice(0, 10)) {
+              try {
+                const squadData = await exports.getTeamSquad(team.id);
+                if (squadData && squadData.squad) {
+                  squadData.squad.forEach((person) => {
+                    const name = person.name?.toLowerCase() || '';
+                    const firstName = person.firstName?.toLowerCase() || '';
+                    const lastName = person.lastName?.toLowerCase() || '';
+
+                    const matches =
+                      name.includes(searchTermLower) ||
+                      firstName.includes(searchTermLower) ||
+                      lastName.includes(searchTermLower) ||
+                      name.startsWith(searchTermLower);
+
+                    if (matches) {
+                      // Add team info
+                      const personWithTeam = {
+                        ...person,
+                        team: {
+                          id: team.id,
+                          name: team.name,
+                          crest: team.crest,
+                        },
+                      };
+
+                      // Separate players and managers
+                      if (person.position === 'Manager' || person.position === 'Coach') {
+                        allManagers.push(personWithTeam);
+                      } else {
+                        allPlayers.push(personWithTeam);
+                      }
+                    }
+                  });
+
+                  // Limit total results to avoid excessive API calls
+                  if (allPlayers.length + allManagers.length >= 50) break;
+                }
+              } catch (error) {
+                continue; // Skip this team if error
+              }
+            }
+            if (allPlayers.length + allManagers.length >= 50) break;
+          }
+        } catch (error) {
+          console.log(`⚠️ Error searching players in competition ${comp}:`, error.message);
+          continue;
+        }
+      }
+    }
+
+    // Remove duplicates based on person ID (for both players and managers)
+    const uniquePlayers = allPlayers.filter(
+      (player, index, self) => index === self.findIndex((p) => p.id === player.id)
+    );
+
+    const uniqueManagers = allManagers.filter(
+      (manager, index, self) => index === self.findIndex((m) => m.id === manager.id)
+    );
+
+    // Sort by relevance for both
+    const sortByRelevance = (a, b) => {
+      const aName = a.name?.toLowerCase() || '';
+      const bName = b.name?.toLowerCase() || '';
+
+      if (aName === searchTermLower) return -1;
+      if (bName === searchTermLower) return 1;
+      if (aName.startsWith(searchTermLower)) return -1;
+      if (bName.startsWith(searchTermLower)) return 1;
+      return 0;
+    };
+
+    uniquePlayers.sort(sortByRelevance);
+    uniqueManagers.sort(sortByRelevance);
+
+    console.log(
+      `✅ Found ${uniquePlayers.length} players and ${uniqueManagers.length} managers for "${searchTerm}"`
+    );
+
+    return {
+      players: uniquePlayers.slice(0, 20), // Limit to 20 results each
+      managers: uniqueManagers.slice(0, 10), // Fewer managers
+      total: uniquePlayers.length + uniqueManagers.length,
+      query: searchTerm,
+    };
+  } catch (error) {
+    console.error('❌ Error in searchPlayers:', error);
+    return { error: 'Failed to search players' };
+  }
+};

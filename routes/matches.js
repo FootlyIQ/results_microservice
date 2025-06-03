@@ -8,6 +8,8 @@ const {
   getPlayerMatches,
   getTeamCompetitionsAndSeasons,
   getCompetitionDetails,
+  searchTeams,
+  searchPlayers,
 } = require('../services/matchesService');
 
 router.get('/matches', async (req, res) => {
@@ -84,6 +86,44 @@ router.get('/competition/:competitionCode', async (req, res) => {
   } catch (error) {
     console.error('Error in competition route:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Search teams by name
+router.get('/search/teams', async (req, res) => {
+  try {
+    const { q } = req.query;
+    console.log(`🔍 Teams search route called for: "${q}"`);
+
+    const result = await searchTeams(q);
+
+    if (result.error) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error in team search route:', error);
+    res.status(500).json({ error: 'Failed to search teams' });
+  }
+});
+
+// Search players by name
+router.get('/search/players', async (req, res) => {
+  try {
+    const { q, team_id } = req.query;
+    console.log(`🔍 Players search route called for: "${q}" (team_id: ${team_id})`);
+
+    const result = await searchPlayers(q, team_id);
+
+    if (result.error) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error in player search route:', error);
+    res.status(500).json({ error: 'Failed to search players' });
   }
 });
 
